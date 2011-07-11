@@ -93,6 +93,7 @@ class Provider(object):
     SKALICLOUD = 32
     SERVERLOVE = 33
     NINEFOLD = 34
+    OPENSTACK_V1_1 = 35
 
 class NodeState(object):
     """
@@ -103,12 +104,14 @@ class NodeState(object):
     @cvar TERMINATED: Node is terminated
     @cvar PENDING: Node is pending
     @cvar UNKNOWN: Node state is unknown
+    @cvar ERROR: Node is in error state
     """
     RUNNING = 0
     REBOOTING = 1
     TERMINATED = 2
     PENDING = 3
     UNKNOWN = 4
+    ERROR = 5
 
 class Architecture(object):
     """

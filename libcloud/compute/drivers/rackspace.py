@@ -23,7 +23,7 @@ import warnings
 from xml.etree import ElementTree as ET
 from xml.parsers.expat import ExpatError
 
-from libcloud.pricing import get_pricing, get_size_price, PRICING_DATA
+from libcloud.pricing import get_pricing
 from libcloud.common.base import Response
 from libcloud.common.types import MalformedResponseError
 from libcloud.compute.types import NodeState, Provider
@@ -157,7 +157,6 @@ class RackspaceNodeDriver(NodeDriver):
                       'VERIFY_RESIZE': NodeState.RUNNING,
                       'PASSWORD': NodeState.PENDING,
                       'RESCUE': NodeState.PENDING,
-                      'REBUILD': NodeState.PENDING,
                       'REBOOT': NodeState.REBOOTING,
                       'HARD_REBOOT': NodeState.REBOOTING,
                       'SHARE_IP': NodeState.PENDING,
@@ -563,51 +562,3 @@ class RackspaceUKNodeDriver(RackspaceNodeDriver):
     def list_locations(self):
         return [NodeLocation(0, 'Rackspace UK London', 'UK', self)]
 
-
-class OpenStackResponse(RackspaceResponse):
-
-    def has_content_type(self, content_type):
-        content_type_header = dict([(key, value) for key, value in
-                                    self.headers.items()
-                                    if key.lower() == 'content-type'])
-        if not content_type_header:
-            return False
-
-        content_type_value = content_type_header['content-type'].lower()
-
-        return content_type_value.find(content_type.lower()) > -1
-
-    def parse_body(self):
-        if not self.has_content_type('application/xml') or not self.body:
-            return self.body
-
-        try:
-            return ET.XML(self.body)
-        except:
-            raise MalformedResponseError(
-                'Failed to parse XML',
-                body=self.body,
-                driver=RackspaceNodeDriver)
-
-
-class OpenStackConnection(RackspaceConnection):
-
-    responseCls = OpenStackResponse
-
-    def __init__(self, user_id, key, secure, host, port):
-        super(OpenStackConnection, self).__init__(user_id, key, secure=secure)
-        self.auth_host = host
-        self.port = (port, port)
-
-
-class OpenStackNodeDriver(RackspaceNodeDriver):
-    name = 'OpenStack'
-    connectionCls = OpenStackConnection
-
-    def _get_size_price(self, size_id):
-        if 'openstack' not in PRICING_DATA['compute']:
-            return 0.0
-
-        return get_size_price(driver_type='compute',
-                              driver_name='openstack',
-                              size_id=size_id)

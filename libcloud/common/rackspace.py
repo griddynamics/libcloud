@@ -86,7 +86,7 @@ class RackspaceBaseConnection(ConnectionUserAndKey):
                 self.auth_host, self.port[self.secure])
             conn.request(
                 method='GET',
-                url='/%s' % (AUTH_API_VERSION),
+                url='/%s' % self.api_version,
                 headers={
                     'X-Auth-User': self.user_id,
                     'X-Auth-Key': self.key
