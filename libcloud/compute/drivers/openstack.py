@@ -16,13 +16,13 @@
 Openstack drivers
 """
 import sys
+from libcloud import enable_debug
 
 try:
     import json
 except:
     import simplejson as json
 
-from libcloud import enable_debug
 from libcloud.compute.base import NodeSize, NodeLocation, Node
 from libcloud.compute.drivers.rackspace import RackspaceResponse, RackspaceNodeDriver, RackspaceConnection
 from libcloud.compute.providers import get_driver
@@ -156,6 +156,31 @@ class OpenStackNodeDriver_v1_1(OpenStackNodeDriver):
                                        method='POST',
                                        data=ET.tostring(server_elm))
         return self._to_node(resp.object)
+
+    def ex_rebuild(self, node_id, image_id):
+        elm = ET.Element(
+            'rebuild',
+            {'xmlns': OPENSTACK_NAMESPACE,
+             'imageRef': str(image_id),
+             }
+        )
+        resp = self.connection.request("/servers/%s/action" % node_id,
+                                       method='POST',
+                                       data=ET.tostring(elm))
+        return resp.status == 202
+
+    def _reboot_node(self, node, reboot_type='SOFT'):
+        elm = ET.Element(
+            'reboot',
+            {'xmlns': OPENSTACK_NAMESPACE,
+             'type': reboot_type,
+            }
+        )
+        resp = self.connection.request("/servers/%s/action" % node.id,
+                                       method='POST',
+                                       data=ET.tostring(elm))
+
+        return resp.status == 202
 
     def ex_set_password(self, node, password):
         attributes = {'xmlns': OPENSTACK_NAMESPACE,
@@ -370,9 +395,9 @@ class OpenStackNodeDriver_v1_1(OpenStackNodeDriver):
 
 
 if __name__ == '__main__':
-    NOVA_API_KEY = "b6bdee04-0a9d-4f93-b1bf-369a7f1cce1f"
-    NOVA_USERNAME = "azhuchkov"
-    # NOVA_URL="http://172.16.72.10:8774/v1.1/"
+    NOVA_API_KEY = "54185447-b270-4223-8eb2-a8c04e9f875f"
+    NOVA_USERNAME = "cloudenv"
+    # NOVA_URL="http://172.16.72.9:8774/v1.1/"
 
     enable_debug(sys.stdout)
 
@@ -382,33 +407,36 @@ if __name__ == '__main__':
         def __init__(self, id):
             self.id = id
 
-            #    print os_driver.create_node(name='az-test', image=Struct(3), size=Struct(2),
-            #                                ex_files={'/root/file.txt': 'blah-blah-blah'})
+#    print os_driver.create_node(name='az-test', image=Struct(3), size=Struct(2),
+#                                ex_files={'/root/file.txt': 'blah-blah-blah'})
 
-            #    print os_driver.ex_image_details(10)
-            #    print os_driver.list_images()
+        #    print os_driver.ex_image_details(10)
+        #    print os_driver.list_images()
 
-            #    print os_driver.ex_size_details(1)
+        #    print os_driver.ex_size_details(1)
 
-            #    nodes = os_driver.list_nodes()
-            #    nodes[0].reboot()
-            #    print os_driver.ex_soft_reboot_node(os_driver.ex_get_node_details(21))
+    nodes = os_driver.list_nodes()
+    node = nodes[0]
+    print node.state
+    node.reboot()
+    print node.state
+    #    print os_driver.ex_soft_reboot_node(os_driver.ex_get_node_details(21))
 
-            #    print os_driver.ex_list_floating_ips()
+    #    print os_driver.ex_list_floating_ips()
 
-            #    print os_driver.ex_limits()
-            #    print os_driver.ex_save_image(Struct(23), 'custom')
-            #    print os_driver.ex_delete_image(10)
+    #    print os_driver.ex_limits()
+    #    print os_driver.ex_save_image(Struct(23), 'custom')
+    #    print os_driver.ex_delete_image(10)
 
-            #    print os_driver.ex_set_password(Struct(23), '123456')
+    #    print os_driver.ex_set_password(Struct(23), '123456')
 
-            #    os_driver.ex_set_server_name(Struct(23), 'az-test-updated')
-            #    os_driver.ex_set_ipv6_address(Struct(23), '::babe:67.23.10.132')
-            #    os_driver.ex_set_ipv4_address(Struct(23), '172.18.102.34')
+    #    os_driver.ex_set_server_name(Struct(23), 'az-test-updated')
+    #    os_driver.ex_set_ipv6_address(Struct(23), '::babe:67.23.10.132')
+    #    os_driver.ex_set_ipv4_address(Struct(23), '172.18.102.34')
 
-    print os_driver.ex_list_floating_ips()
+#    print os_driver.ex_list_floating_ips()
 
-    print os_driver.ex_associate_floating_ip(1, '172.18.102.36')
+#    print os_driver.ex_associate_floating_ip(1, '172.18.102.36')
 #    rs_driver = get_driver(Provider.RACKSPACE)('paypal9', 'f22efeb004d2f1d54f47857891f8fab9')
 #
 #    print rs_driver.list_nodes()
