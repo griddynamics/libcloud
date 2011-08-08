@@ -15,6 +15,7 @@
 """
 Openstack drivers
 """
+import httplib
 import sys
 from libcloud import enable_debug
 
@@ -29,13 +30,13 @@ from libcloud.compute.providers import get_driver
 from libcloud.compute.types import Provider, NodeState
 from libcloud.pricing import get_size_price, PRICING_DATA
 from xml.etree import ElementTree as ET
-from libcloud.common.types import MalformedResponseError
+from libcloud.common.types import MalformedResponseError, InvalidCredsError
 
 class OpenStackResponse(RackspaceResponse):
     def has_content_type(self, content_type):
         content_type_header = dict([(key, value) for key, value in
-                                    self.headers.items()
-                                    if key.lower() == 'content-type'])
+                                                 self.headers.items()
+                                                 if key.lower() == 'content-type'])
         if not content_type_header:
             return False
 
@@ -63,12 +64,91 @@ class OpenStackConnection(RackspaceConnection):
         super(OpenStackConnection, self).__init__(user_id, key, secure=secure)
         self.auth_host = host
         self.port = (port, port)
+        self.server_url = None
+
+    @property
+    def host(self):
+        return self.auth_host
+
+    def connect(self, host=None, port=None):
+        if not self.auth_token:
+            self.server_url = 'http%s://%s:%s/%s' %\
+                              ('s' if self.secure else '', self.auth_host, self.port[self.secure], self.api_version)
+            self.__server_url = self.auth_host
+            self.driver.auth_provider.authenticate(self)
+
+        super(OpenStackConnection, self).connect(host, port)
+
+
+class KeyStoneAuthProvider(object):
+    def __init__(self, port, host=None, tenant_id=None, version='v2.0'):
+        self.port = port
+        self.host = host
+        self.tenant_id = tenant_id
+        self.version = version
+
+    def authenticate(self, connection):
+        credentials = {
+            'username': connection.user_id,
+            'password': connection.key
+        }
+
+        if self.tenant_id:
+            credentials['tenantId'] = self.tenant_id
+
+        # Initial connection used for authentication
+        conn = connection.conn_classes[connection.secure](
+            self.host or connection.host, self.port)
+
+        try:
+            conn.request(
+                method='POST',
+                url='/%s/tokens' % self.version,
+                headers={
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                body=json.dumps({'passwordCredentials': credentials})
+            )
+
+            self._handle_response(conn.getresponse(), connection)
+        finally:
+            conn.close()
+
+    def _handle_response(self, resp, conn):
+        if resp.status == httplib.OK:
+            # HTTP OK (200): auth successful
+            try:
+                auth = json.loads(resp.read())
+                conn.auth_token = auth['auth']['token']['id']
+            except Exception as e:
+                # Returned 200 but has missing information in the header, something is wrong
+                raise MalformedResponseError('Malformed response',
+                                             body='Invalid response body',
+                                             driver=conn.driver)
+        elif resp.status == httplib.UNAUTHORIZED:
+            # HTTP UNAUTHORIZED (401): auth failed
+            raise InvalidCredsError()
+        else:
+            # Any response code != 401 or 204, something is wrong
+            raise MalformedResponseError('Malformed response',
+                                         body='code: %s body:%s' % (resp.status, ''.join(resp.body.readlines())),
+                                         driver=conn.driver)
+
+
+class RackspaceAuthProvider(object):
+    def authenticate(self, connection):
+        connection._populate_hosts_and_request_paths()
 
 
 class OpenStackNodeDriver(RackspaceNodeDriver):
     name = 'OpenStack'
     type = Provider.OPENSTACK
     connectionCls = OpenStackConnection
+
+    def __init__(self, key, secret=None, secure=True, host=None, port=None, auth_provider=RackspaceAuthProvider()):
+        self.auth_provider = auth_provider
+        super(OpenStackNodeDriver, self).__init__(key, secret, secure, host, port)
 
     def _get_size_price(self, size_id):
         if 'openstack' not in PRICING_DATA['compute']:
@@ -80,9 +160,7 @@ class OpenStackNodeDriver(RackspaceNodeDriver):
 
 
 class OpenStackConnection_v1_1(OpenStackConnection):
-    def __init__(self, user_id, key, secure, host, port):
-        super(OpenStackConnection_v1_1, self).__init__(user_id, key, secure, host, port)
-        self.api_version = 'v1.1'
+    api_version = 'v1.1'
 
 
 OPENSTACK_NAMESPACE = 'http://docs.openstack.org/compute/api/v1.1'
@@ -159,10 +237,10 @@ class OpenStackNodeDriver_v1_1(OpenStackNodeDriver):
 
     def ex_rebuild(self, node_id, image_id):
         elm = ET.Element(
-            'rebuild',
-            {'xmlns': OPENSTACK_NAMESPACE,
-             'imageRef': str(image_id),
-             }
+            'rebuild', {
+                'xmlns': OPENSTACK_NAMESPACE,
+                'imageRef': str(image_id),
+                }
         )
         resp = self.connection.request("/servers/%s/action" % node_id,
                                        method='POST',
@@ -172,9 +250,9 @@ class OpenStackNodeDriver_v1_1(OpenStackNodeDriver):
     def _reboot_node(self, node, reboot_type='SOFT'):
         elm = ET.Element(
             'reboot',
-            {'xmlns': OPENSTACK_NAMESPACE,
-             'type': reboot_type,
-            }
+                {'xmlns': OPENSTACK_NAMESPACE,
+                 'type': reboot_type,
+                 }
         )
         resp = self.connection.request("/servers/%s/action" % node.id,
                                        method='POST',
@@ -308,7 +386,7 @@ class OpenStackNodeDriver_v1_1(OpenStackNodeDriver):
     def ex_save_image(self, node, name):
         image_elm = ET.Element(
             'image',
-            {
+                {
                 'xmlns': OPENSTACK_NAMESPACE,
                 'name': name,
                 'serverRef': str(node.id)
@@ -397,46 +475,58 @@ class OpenStackNodeDriver_v1_1(OpenStackNodeDriver):
 if __name__ == '__main__':
     NOVA_API_KEY = "54185447-b270-4223-8eb2-a8c04e9f875f"
     NOVA_USERNAME = "cloudenv"
-    # NOVA_URL="http://172.16.72.9:8774/v1.1/"
+    NOVA_HOST = "172.16.72.9"
+
+    NOVA_API_KEY = "secrete"
+    NOVA_USERNAME = "admin"
+    NOVA_HOST = "50.56.41.213"
 
     enable_debug(sys.stdout)
 
-    os_driver = get_driver(Provider.OPENSTACK_V1_1)(NOVA_USERNAME, NOVA_API_KEY, False, host="172.16.72.9", port=8774)
+    os_driver = get_driver(Provider.OPENSTACK_V1_1)(NOVA_USERNAME, NOVA_API_KEY, False, host=NOVA_HOST, port=8774,
+                                                   auth_provider=KeyStoneAuthProvider(8081))
 
     class Struct(object):
         def __init__(self, id):
             self.id = id
 
-#    print os_driver.create_node(name='az-test', image=Struct(3), size=Struct(2),
-#                                ex_files={'/root/file.txt': 'blah-blah-blah'})
+    #    print os_driver.create_node(name='az-test', image=Struct(3), size=Struct(2),
+    #                                ex_files={'/root/file.txt': 'blah-blah-blah'})
 
-        #    print os_driver.ex_image_details(10)
-        #    print os_driver.list_images()
+    #    print os_driver.ex_image_details(10)
+    #    print os_driver.list_images()
 
-        #    print os_driver.ex_size_details(1)
+    #    print os_driver.ex_size_details(1)
 
     nodes = os_driver.list_nodes()
-    node = nodes[0]
-    print node.state
-    node.reboot()
-    print node.state
-    #    print os_driver.ex_soft_reboot_node(os_driver.ex_get_node_details(21))
-
-    #    print os_driver.ex_list_floating_ips()
-
-    #    print os_driver.ex_limits()
-    #    print os_driver.ex_save_image(Struct(23), 'custom')
-    #    print os_driver.ex_delete_image(10)
-
-    #    print os_driver.ex_set_password(Struct(23), '123456')
-
-    #    os_driver.ex_set_server_name(Struct(23), 'az-test-updated')
-    #    os_driver.ex_set_ipv6_address(Struct(23), '::babe:67.23.10.132')
-    #    os_driver.ex_set_ipv4_address(Struct(23), '172.18.102.34')
+    print os_driver.list_images()
+    print os_driver.list_sizes()
+#    node = nodes[0]
+#    print node.state
+#    node.reboot()
+#    print node.state
+#    print os_driver.ex_soft_reboot_node(os_driver.ex_get_node_details(21))
 
 #    print os_driver.ex_list_floating_ips()
 
-#    print os_driver.ex_associate_floating_ip(1, '172.18.102.36')
+#    print os_driver.ex_limits()
+#    print os_driver.ex_save_image(Struct(23), 'custom')
+#    print os_driver.ex_delete_image(10)
+
+#    print os_driver.ex_set_password(Struct(23), '123456')
+
+#    os_driver.ex_set_server_name(Struct(23), 'az-test-updated')
+#    os_driver.ex_set_ipv6_address(Struct(23), '::babe:67.23.10.132')
+#    os_driver.ex_set_ipv4_address(Struct(23), '172.18.102.34')
+
+#    print os_driver.ex_list_floating_ips()
+
+#    print os_driver.ex_get_floating_ip_details(1)
+
+#    print os_driver.ex_allocate_floating_ip()
+#    print os_driver.ex_release_floating_ip(1)
+
+#    print os_driver.ex_associate_floating_ip(1, '172.18.102.35')
 #    rs_driver = get_driver(Provider.RACKSPACE)('paypal9', 'f22efeb004d2f1d54f47857891f8fab9')
 #
 #    print rs_driver.list_nodes()

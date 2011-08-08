@@ -80,11 +80,11 @@ class RackspaceConnection(RackspaceBaseConnection):
 
     responseCls = RackspaceResponse
     auth_host = AUTH_HOST_US
+    api_version = 'v1.0'
     _url_key = "server_url"
 
     def __init__(self, user_id, key, secure=True):
         super(RackspaceConnection, self).__init__(user_id, key, secure)
-        self.api_version = 'v1.0'
         self.accept_format = 'application/xml'
 
     def request(self, action, params=None, data='', headers=None,
