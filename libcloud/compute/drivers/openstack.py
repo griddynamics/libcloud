@@ -477,10 +477,6 @@ if __name__ == '__main__':
     NOVA_USERNAME = "cloudenv"
     NOVA_HOST = "172.16.72.9"
 
-    NOVA_API_KEY = "secrete"
-    NOVA_USERNAME = "admin"
-    NOVA_HOST = "50.56.41.213"
-
     enable_debug(sys.stdout)
 
     os_driver = get_driver(Provider.OPENSTACK_V1_1)(NOVA_USERNAME, NOVA_API_KEY, False, host=NOVA_HOST, port=8774,
