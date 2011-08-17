@@ -8,18 +8,22 @@ except ImportError:
 
 class KeystoneAuth(object):
 
-    def __init__(self, keystone_url ):
+    def __init__(self, keystone_url, api_url ):
         self.keystone_url = keystone_url
         connectionCls = self.connectionCls
         class _ (KeystoneConnection, connectionCls):
             def __init__(self, *args, **kwargs):
-                KeystoneConnection.__init__(self, keystone_url)
+                KeystoneConnection.__init__(self, keystone_url, api_url)
                 connectionCls.__init__(self, *args, **kwargs)
         self.connectionCls = _
 
 class KeystoneConnection(object):
-    def __init__(self, keystone_url):
+    def __init__(self, keystone_url, api_url):
         self.keystone_url = keystone_url
+        self.api_url = api_url
+
+    def _request_auth_endpoint(self, url, version):
+        return (url, version)
 
     def _auth(self):
 
@@ -47,7 +51,8 @@ class KeystoneConnection(object):
                 body = resp.read()
                 body = json.loads(body)
 
-                self.server_url = body['auth']['serviceCatalog']['nova'][0]['adminURL']
+                self.server_url = self.api_url
+                #body['auth']['serviceCatalog']['nova'][0]['adminURL']
                 self.auth_token = body['auth']['token']['id']
                 for key in ['server_url', 'storage_url', 'cdn_management_url',
                             'lb_url']:
