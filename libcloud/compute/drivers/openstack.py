@@ -21,6 +21,7 @@ try:
     import simplejson as json
 except ImportError:
     import json
+import re
 
 from libcloud.common.types import MalformedResponseError, InvalidCredsError
 from libcloud.compute.types import NodeState, Provider
@@ -31,6 +32,8 @@ from libcloud.compute.drivers.rackspace import MossoBasedNodeDriver, RackspaceNo
 from libcloud.compute.drivers.rackspace import MossoBasedResponse, RackspaceConnection
 from libcloud.compute.drivers.rackspace import MossoBasedConnection
 
+
+image_id_pattern = re.compile(r'.*/images/(\d+)$')
 
 class OpenStackJsonResponse(MossoBasedResponse):
     """ OpenStack specific response """
@@ -403,10 +406,6 @@ class OpenStackNodeDriver_v1_1(MossoBasedNodeDriver):
         resp = self.connection.request('/limits', method='GET')
         return resp.object['limits']
 
-    def _save_image_request_body(self, node, image_name):
-        body = {"image": {"serverId": node.id, "name": image_name}}
-        return json.dumps(body)
-
     def _to_floating_ip(self, floating_ip):
         return FloatingIp(floating_ip['id'], floating_ip['ip'], floating_ip['fixed_ip'], floating_ip['instance_id'])
 
@@ -440,6 +439,24 @@ class OpenStackNodeDriver_v1_1(MossoBasedNodeDriver):
         resp = self._node_action(node, body=body)
         return resp.status == 202
 
+    def ex_save_image(self, node, name):
+        body = {"createImage": {"name": name}}
+        resp = self._node_action(node, body=body)
+        if resp.status != 202:
+            return None
+        location = resp.headers['location']
+        m = image_id_pattern.match(location)
+        if not m:
+            return None
+        return m.group(1)
+
+    def ex_destroy_image(self, image):
+        if isinstance(image, basestring) or isinstance(image, int):
+            image_id = image
+        else:
+            image_id = image.id
+        resp = self.connection.request('/images/%s' % image_id, method='DELETE')
+        return resp.status == 204
 
 
 class OpenStackIps(object):
@@ -450,10 +467,12 @@ class OpenStackIps(object):
         self.private_ipv4 = []
         self.public_ipv6 = []
         self.private_ipv6 = []
-        self._separate_by_protocol(ip_list['public'],
-                                   self.public_ipv4, self.public_ipv6)
-        self._separate_by_protocol(ip_list['private'],
-                                   self.private_ipv4, self.private_ipv6)
+        if 'public' in ip_list:
+            self._separate_by_protocol(ip_list['public'],
+                                       self.public_ipv4, self.public_ipv6)
+        if 'private' in ip_list:
+            self._separate_by_protocol(ip_list['private'],
+                                       self.private_ipv4, self.private_ipv6)
 
     def _separate_by_protocol(self, input_list, out_list_v4, out_list_v6):
         """
