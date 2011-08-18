@@ -414,16 +414,17 @@ class OpenStackNodeDriver_v1_1(MossoBasedNodeDriver):
         return FloatingIp(resp.object['allocated']['id'], resp.object['allocated']['floating_ip'])
 
     def ex_release_floating_ip(self, floating_ip_id):
-        resp = self.connection.request('/os-floating-ips/%s' %floating_ip_id, method='DELETE')
+        resp = self.connection.request('/extras/os-floating-ips/%s' %floating_ip_id, method='DELETE')
         return resp.status == 200
 
     def ex_get_all_floating_ips(self):
         resp = self.connection.request('/os-floating-ips')
         return map(lambda x: self._to_floating_ip(x['floating_ip']), resp.object['floating_ips'])
 
-    def ex_associate_floating_ip(self, floating_ip_id, fixed_ip_id):
-        request = {'associate_address' :{'fixed_ip' : fixed_ip_id}}
-        resp = self.connection.request('/os-floating-ips/%s/associate' % floating_ip_id, method='POST', data=json.dumps(request))
+    def ex_associate_floating_ip(self, floating_ip_id, fixed_ip_id, server_id):
+        request = {'associate_address' :{'fixed_ip' : fixed_ip_id}, "instance_id": server_id}
+        resp = self.connection.request('/extras/os-floating-ips/%s/associate' % floating_ip_id,
+                                       method='POST', data=json.dumps(request))
         return resp.status == 200
 
     def ex_floating_ip_details(self, floating_ip_id):
@@ -431,8 +432,8 @@ class OpenStackNodeDriver_v1_1(MossoBasedNodeDriver):
         return  self._to_floating_ip(resp.object['floating_ip'])
 
     def ex_disassociate_floating_ip(self, floating_ip_id):
-        resp = self.connection.request('/os-floating-ips/%s/disassociate' % floating_ip_id, method='POST')
-        return  resp.status == 200
+        resp = self.connection.request('/extras/os-floating-ips/%s/disassociate' % floating_ip_id, method='POST')
+        return resp.status == 200
 
     def ex_reboot(self, node, reboot_type):
         body = {"reboot" : {"type": reboot_type}}
