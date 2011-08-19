@@ -298,8 +298,13 @@ class OpenStackNodeDriver_v1_1(OpenStackNodeDriver):
         return resp.status == 204
 
     def _to_node(self, el):
-        def get_ips(el):
-            return [json.loads(ip.get('addr').replace('\'', '\"'))['addr'] for ip in el]
+        def get_ips(network_type):
+            network_ips = [self._findall(network, 'ip') for network in self._findall(el, 'addresses/network') if
+                        network.get('id') == network_type]
+
+            ips = reduce(lambda x, y: x.extend(y), network_ips) if network_ips else []
+
+            return [ip.get('addr') for ip in ips] if ips else []
 
         #todo: test metadata support
         def get_meta_dict(el):
@@ -308,25 +313,21 @@ class OpenStackNodeDriver_v1_1(OpenStackNodeDriver):
                 d[meta.get('key')] = meta.text
             return d
 
-        public_ip = get_ips(self._findall(el,
-                                          'addresses/public/ip'))
-        private_ip = get_ips(self._findall(el,
-                                           'addresses/private/ip'))
         metadata = get_meta_dict(self._findall(el, 'metadata/meta'))
 
         n = Node(id=el.get('id'),
                  name=el.get('name'),
                  state=self.NODE_STATE_MAP.get(
                      el.get('status'), NodeState.UNKNOWN),
-                 public_ip=public_ip,
-                 private_ip=private_ip,
+                 public_ip=get_ips('public'),
+                 private_ip=get_ips('private'),
                  driver=self.connection.driver,
                  extra={
                      'password': el.get('adminPass'),
                      'hostId': el.get('hostId'),
-                     'imageId': el.get('imageRef'),
-                     'flavorId': el.get('flavorRef'),
-                     'uri': self._find(el, 'links/link').get('href'),
+                     'imageId': self._find(el, 'image').get('id'),
+                     'flavorId': self._find(el, 'flavor').get('id'),
+                     'uri': el.find('{http://www.w3.org/2005/Atom}link').get('href'),
                      'metadata': metadata,
                      })
         return n
@@ -422,15 +423,15 @@ class OpenStackNodeDriver_v1_1(OpenStackNodeDriver):
                           driver=self)
 
     def ex_list_floating_ips(self):
-        resp = self.connection.request("/os-floating-ips")
+        resp = self.connection.request("/extras/os-floating-ips")
         return self._to_floating_ips(resp.object)
 
     def ex_get_floating_ip_details(self, id):
-        resp = self.connection.request("/os-floating-ips/%s" % id)
+        resp = self.connection.request("/extras/os-floating-ips/%s" % id)
         return self._to_floating_ip(resp.object)
 
     def ex_release_floating_ip(self, id):
-        resp = self.connection.request("/os-floating-ips/%s" % id, method='DELETE')
+        resp = self.connection.request("/extras/os-floating-ips/%s" % id, method='DELETE')
         return resp.status == 200
 
     def ex_associate_floating_ip(self, floating_ip_id, fixed_ip):
@@ -440,7 +441,7 @@ class OpenStackNodeDriver_v1_1(OpenStackNodeDriver):
         address_elm = ET.Element('associate_address')
         address_elm.append(fixed_ip_elm)
 
-        resp = self.connection.request('/os-floating-ips/%s/associate' % floating_ip_id,
+        resp = self.connection.request('/extras/os-floating-ips/%s/associate' % floating_ip_id,
                                        method='POST',
                                        data=ET.tostring(address_elm))
 
@@ -452,7 +453,7 @@ class OpenStackNodeDriver_v1_1(OpenStackNodeDriver):
                           driver=self)
 
     def ex_disassociate_floating_ip(self, floating_ip_id):
-        resp = self.connection.request('/os-floating-ips/%s/disassociate' % floating_ip_id,
+        resp = self.connection.request('/extras/os-floating-ips/%s/disassociate' % floating_ip_id,
                                        method='POST')
         return resp.status == 200
 
@@ -477,26 +478,28 @@ if __name__ == '__main__':
     NOVA_USERNAME = "cloudenv"
     NOVA_HOST = "172.16.72.9"
 
+    NOVA_API_KEY = "secrete"
+    NOVA_USERNAME = "admin"
+    NOVA_HOST = "50.56.41.212"
+
     enable_debug(sys.stdout)
 
     os_driver = get_driver(Provider.OPENSTACK_V1_1)(NOVA_USERNAME, NOVA_API_KEY, False, host=NOVA_HOST, port=8774,
-                                                   auth_provider=KeyStoneAuthProvider(8081))
+                                                    auth_provider=KeyStoneAuthProvider(5000))
 
     class Struct(object):
         def __init__(self, id):
             self.id = id
 
-    #    print os_driver.create_node(name='az-test', image=Struct(3), size=Struct(2),
-    #                                ex_files={'/root/file.txt': 'blah-blah-blah'})
+    print os_driver.create_node(name='az-test', image=Struct(111), size=Struct(1),
+                                ex_files={'/root/file.txt': 'blah-blah-blah'})
 
     #    print os_driver.ex_image_details(10)
-    #    print os_driver.list_images()
+#    print os_driver.ex_get_node_details(12)
 
     #    print os_driver.ex_size_details(1)
 
-    nodes = os_driver.list_nodes()
-    print os_driver.list_images()
-    print os_driver.list_sizes()
+#    print [node.id for node in os_driver.list_nodes()]
 #    node = nodes[0]
 #    print node.state
 #    node.reboot()
