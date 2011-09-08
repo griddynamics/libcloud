@@ -32,7 +32,17 @@ from libcloud.pricing import get_size_price, PRICING_DATA
 from xml.etree import ElementTree as ET
 from libcloud.common.types import MalformedResponseError, InvalidCredsError
 
+class AuthExpiredException(Exception):
+    pass
+
 class OpenStackResponse(RackspaceResponse):
+
+    def __init__(self, response):
+        if response.status == httplib.UNAUTHORIZED:
+            raise AuthExpiredException()
+
+        super(OpenStackResponse, self).__init__(response)
+
     def has_content_type(self, content_type):
         content_type_header = dict([(key, value) for key, value in
                                                  self.headers.items()
@@ -55,6 +65,12 @@ class OpenStackResponse(RackspaceResponse):
                 'Failed to parse XML',
                 body=self.body,
                 driver=RackspaceNodeDriver)
+
+    def parse_error(self):
+        if not self.has_content_type('application/xml') or not self.body:
+            return self.body
+
+        super(OpenStackResponse, self).parse_error()
 
 
 class OpenStackConnection(RackspaceConnection):
@@ -79,6 +95,13 @@ class OpenStackConnection(RackspaceConnection):
 
         super(OpenStackConnection, self).connect(host, port)
 
+    def request(self, action, params=None, data='', headers=None,
+                method='GET'):
+        try:
+            return super(OpenStackConnection, self).request(action, params, data, headers, method)
+        except AuthExpiredException:
+            self.driver.auth_provider.authenticate(self)
+            return super(OpenStackConnection, self).request(action, params, data, headers, method)
 
 class KeyStoneAuthProvider(object):
     def __init__(self, port, host=None, tenant_id=None, version='v2.0'):
@@ -478,10 +501,6 @@ if __name__ == '__main__':
     NOVA_USERNAME = "cloudenv"
     NOVA_HOST = "172.16.72.9"
 
-    NOVA_API_KEY = "secrete"
-    NOVA_USERNAME = "admin"
-    NOVA_HOST = "50.56.41.212"
-
     enable_debug(sys.stdout)
 
     os_driver = get_driver(Provider.OPENSTACK_V1_1)(NOVA_USERNAME, NOVA_API_KEY, False, host=NOVA_HOST, port=8774,
@@ -491,10 +510,12 @@ if __name__ == '__main__':
         def __init__(self, id):
             self.id = id
 
-    print os_driver.create_node(name='az-test', image=Struct(111), size=Struct(1),
-                                ex_files={'/root/file.txt': 'blah-blah-blah'})
+#    print os_driver.create_node(name='az-test', image=Struct(111), size=Struct(1),
+#                                ex_files={'/root/file.txt': 'blah-blah-blah'})
 
-    #    print os_driver.ex_image_details(10)
+    print os_driver.list_sizes()
+
+    print os_driver.list_sizes()
 #    print os_driver.ex_get_node_details(12)
 
     #    print os_driver.ex_size_details(1)
