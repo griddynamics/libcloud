@@ -24,7 +24,7 @@ try:
 except:
     import simplejson as json
 
-from libcloud.compute.base import NodeSize, NodeLocation, Node
+from libcloud.compute.base import NodeSize, NodeLocation, Node, NodeImage
 from libcloud.compute.drivers.rackspace import RackspaceResponse, RackspaceNodeDriver, RackspaceConnection
 from libcloud.compute.providers import get_driver
 from libcloud.compute.types import Provider, NodeState
@@ -229,6 +229,25 @@ class OpenStackNodeDriver_v1_1(OpenStackNodeDriver):
         resp = self.connection.request("/images/%s" % image_id)
         return self._to_image(resp.object)
 
+    def ex_image_update(self, image_id, metadata):
+        if not len(metadata):
+            return None
+
+        metadata_elm = ET.Element('metadata', {'xmlns': OPENSTACK_NAMESPACE})
+        for k, v in metadata.items():
+            meta_elm = ET.SubElement(metadata_elm, 'meta', {'key': str(k)})
+            meta_elm.text = str(v)
+
+        resp = self.connection.request("/images/%s/metadata" % image_id,
+                                       method='POST',
+                                       data=ET.tostring(metadata_elm))
+        return resp.status == 200
+
+    def ex_image_delete(self, image_id):
+        resp = self.connection.request("/images/%s" % image_id,
+                                       method='DELETE')
+        return resp.status == 204
+
     def ex_size_details(self, size_id):
         resp = self.connection.request("/flavors/%s" % size_id)
         return self._to_size(resp.object)
@@ -374,6 +393,30 @@ class OpenStackNodeDriver_v1_1(OpenStackNodeDriver):
                         bandwidth=None,
                         price=self._get_size_price(self._child_value(el, 'id')),
                         driver=self.connection.driver)
+
+    def _to_image(self, el):
+        def get_meta_dict(el):
+            d = {}
+            for meta in el:
+                d[meta.get('key')] = meta.text
+            return d
+
+        i = NodeImage(id=el.get('id'),
+                     name=el.get('name'),
+                     driver=self.connection.driver,
+                     extra={
+                         "serverId": el.get('serverId'),
+                         "updated" : el.get('updated'),
+                         "created" : el.get('created'),
+                         "tenantId": el.get('tenantId'),
+                         "userId" : el.get('userId'),
+                         "status" : el.get('status'),
+                         "progress" : el.get('progress'),
+                         "minDisk" : el.get('minDisk'),
+                         "minRam" : el.get("minRam"),
+                         "metadata": get_meta_dict(self._findall(el, 'metadata/meta'))
+                     })
+        return i
 
     def list_locations(self):
         return [NodeLocation(0, 'Private Cloud', 'Unknown', self)]
