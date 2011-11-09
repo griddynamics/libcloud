@@ -15,6 +15,7 @@
 """
 Openstack drivers
 """
+import base64
 import httplib
 import sys
 from libcloud import enable_debug
@@ -35,8 +36,8 @@ from libcloud.common.types import MalformedResponseError, InvalidCredsError
 class AuthExpiredException(Exception):
     pass
 
-class OpenStackResponse(RackspaceResponse):
 
+class OpenStackResponse(RackspaceResponse):
     def __init__(self, response):
         if response.status == httplib.UNAUTHORIZED:
             raise AuthExpiredException()
@@ -103,6 +104,7 @@ class OpenStackConnection(RackspaceConnection):
             self.driver.auth_provider.authenticate(self)
             return super(OpenStackConnection, self).request(action, params, data, headers, method)
 
+
 class KeyStoneAuthProvider(object):
     def __init__(self, port, host=None, tenant_id=None, version='v2.0'):
         self.port = port
@@ -113,11 +115,14 @@ class KeyStoneAuthProvider(object):
     def authenticate(self, connection):
         credentials = {
             'username': connection.user_id,
-            'password': connection.key
+            'password': connection.key,
+            'tenantId': self.tenant_id or connection.tenant_id
         }
 
-        if self.tenant_id:
-            credentials['tenantId'] = self.tenant_id
+        tenant_id = self.tenant_id or (hasattr(connection, 'tenant_id') and getattr(connection, 'tenant_id'))
+
+        if tenant_id:
+            credentials['tenantId'] = tenant_id
 
         # Initial connection used for authentication
         conn = connection.conn_classes[connection.secure](
@@ -182,8 +187,40 @@ class OpenStackNodeDriver(RackspaceNodeDriver):
                               size_id=size_id)
 
 
+class OpenStackResponse_v1_1(OpenStackResponse):
+    def parse_error(self):
+        if not self.has_content_type('application/xml') or not self.body:
+            return self.body
+
+        try:
+            body = ET.XML(self.body)
+        except:
+            raise MalformedResponseError(
+                "Failed to parse XML",
+                body=self.body, driver=OpenStackNodeDriver_v1_1)
+
+        return "Server Fault [code: %s; message: %s; details: %s]" % (body.get('code'),
+                                                                      body.findtext(
+                                                                          '{%s}message' % OPENSTACK_NAMESPACE,
+                                                                          '').strip()
+                                                                      ,
+                                                                      body.findtext(
+                                                                          '{%s}details' % OPENSTACK_NAMESPACE,
+                                                                          '').strip())
+
+
 class OpenStackConnection_v1_1(OpenStackConnection):
     api_version = 'v1.1'
+    responseCls = OpenStackResponse_v1_1
+
+    @property
+    def tenant_id(self):
+        return self.driver.tenant_id
+
+    def request(self, action, params=None, data='', headers=None,
+                method='GET'):
+        return super(OpenStackConnection_v1_1, self).request('/' + self.tenant_id + action, params, data, headers,
+                                                             method)
 
 
 OPENSTACK_NAMESPACE = 'http://docs.openstack.org/compute/api/v1.1'
@@ -225,6 +262,11 @@ class OpenStackNodeDriver_v1_1(OpenStackNodeDriver):
                       'ERROR': NodeState.ERROR,
                       'UNKNOWN': NodeState.UNKNOWN}
 
+    def __init__(self, key, secret=None, secure=True, host=None, port=None, tenant_id=None,
+                 auth_provider=RackspaceAuthProvider()):
+        self.tenant_id = tenant_id
+        super(OpenStackNodeDriver_v1_1, self).__init__(key, secret, secure, host, port, auth_provider)
+
     def ex_image_details(self, image_id):
         resp = self.connection.request("/images/%s" % image_id)
         return self._to_image(resp.object)
@@ -257,24 +299,27 @@ class OpenStackNodeDriver_v1_1(OpenStackNodeDriver):
         image = kwargs['image']
         size = kwargs['size']
 
-        attributes = {'xmlns': OPENSTACK_NAMESPACE,
-                      'name': name,
-                      'imageRef': str(image.id),
-                      'flavorRef': str(size.id)
+        server = {'name': name,
+                  'imageRef': str(image.id),
+                  'flavorRef': str(size.id)
         }
 
-        server_elm = ET.Element('server', attributes)
+        if 'ex_key_name' in kwargs:
+            server['key_name'] = kwargs['ex_key_name']
 
-        metadata_elm = self._metadata_to_xml(kwargs.get("ex_metadata", {}))
-        if metadata_elm:
-            server_elm.append(metadata_elm)
+        if 'ex_security_groups' in kwargs:
+            server['security_groups'] = [{'name': sg} for sg in kwargs['ex_security_groups']]
 
-        files_elm = self._files_to_xml(kwargs.get("ex_files", {}))
-        if files_elm:
-            server_elm.append(files_elm)
+        if 'ex_metadata' in kwargs:
+            server['metadata'] = kwargs['ex_metadata']
+
+        if 'ex_files' in kwargs:
+            server['personality'] = [{'path': k, 'contents': base64.b64encode(v)} for k, v in kwargs['ex_files'].items()]
+
         resp = self.connection.request("/servers",
                                        method='POST',
-                                       data=ET.tostring(server_elm))
+                                       headers={'Content-Type': 'application/json'},
+                                       data=json.dumps({'server': server}))
         return self._to_node(resp.object)
 
     def ex_rebuild(self, node_id, image_id):
@@ -342,7 +387,7 @@ class OpenStackNodeDriver_v1_1(OpenStackNodeDriver):
     def _to_node(self, el):
         def get_ips(network_type):
             network_ips = [self._findall(network, 'ip') for network in self._findall(el, 'addresses/network') if
-                        network.get('id') == network_type]
+                           network.get('id') == network_type]
 
             ips = reduce(lambda x, y: x.extend(y), network_ips) if network_ips else []
 
@@ -371,7 +416,13 @@ class OpenStackNodeDriver_v1_1(OpenStackNodeDriver):
                      'flavorId': self._find(el, 'flavor').get('id'),
                      'uri': el.find('{http://www.w3.org/2005/Atom}link').get('href'),
                      'metadata': metadata,
-                     })
+                     'userId': el.get('userId'),
+                     'tenantId': el.get('tenantId'),
+                     'created': el.get('created'),
+                     'updated': el.get('updated'),
+                     'accessIPv4': el.get('accessIPv4'),
+                     'accessIPv6': el.get('accessIPv6')
+                 })
         return n
 
     def _fixxpath(self, xpath):
@@ -386,36 +437,36 @@ class OpenStackNodeDriver_v1_1(OpenStackNodeDriver):
         return element.text.strip() if element is not None else None
 
     def _to_size(self, el):
-        return NodeSize(id=self._child_value(el, 'id'),
-                        name=self._child_value(el, 'name'),
-                        ram=self._child_value(el, 'ram'),
-                        disk=self._child_value(el, 'disk'),
+        return NodeSize(id=el.get('id'),
+                        name=el.get('name'),
+                        ram=el.get('ram'),
+                        disk=el.get('disk'),
                         bandwidth=None,
-                        price=self._get_size_price(self._child_value(el, 'id')),
+                        price=self._get_size_price(el.get('id')),
                         driver=self.connection.driver)
 
     def _to_image(self, el):
         def get_meta_dict(el):
             d = {}
             for meta in el:
-                d[meta.get('key')] = meta.text
+                d[meta.get('key')] = meta.text.strip()
             return d
 
         i = NodeImage(id=el.get('id'),
-                     name=el.get('name'),
-                     driver=self.connection.driver,
-                     extra={
-                         "serverId": el.get('serverId'),
-                         "updated" : el.get('updated'),
-                         "created" : el.get('created'),
-                         "tenantId": el.get('tenantId'),
-                         "userId" : el.get('userId'),
-                         "status" : el.get('status'),
-                         "progress" : el.get('progress'),
-                         "minDisk" : el.get('minDisk'),
-                         "minRam" : el.get("minRam"),
-                         "metadata": get_meta_dict(self._findall(el, 'metadata/meta'))
-                     })
+                      name=el.get('name'),
+                      driver=self.connection.driver,
+                      extra={
+                          "serverId": el.get('serverId'),
+                          "updated": el.get('updated'),
+                          "created": el.get('created'),
+                          "tenantId": el.get('tenantId'),
+                          "userId": el.get('userId'),
+                          "status": el.get('status'),
+                          "progress": el.get('progress'),
+                          "minDisk": el.get('minDisk'),
+                          "minRam": el.get("minRam"),
+                          "metadata": get_meta_dict(self._findall(el, 'metadata/meta'))
+                      })
         return i
 
     def list_locations(self):
@@ -547,21 +598,30 @@ if __name__ == '__main__':
     enable_debug(sys.stdout)
 
     os_driver = get_driver(Provider.OPENSTACK_V1_1)(NOVA_USERNAME, NOVA_API_KEY, False, host=NOVA_HOST, port=8774,
+                                                    tenant_id='DevTools',
                                                     auth_provider=KeyStoneAuthProvider(5000))
 
     class Struct(object):
         def __init__(self, id):
             self.id = id
 
-#    print os_driver.create_node(name='az-test', image=Struct(111), size=Struct(1),
-#                                ex_files={'/root/file.txt': 'blah-blah-blah'})
+#    print os_driver.create_node(name='az-security-test', image=Struct(307), size=Struct(16),
+#                                ex_security_groups=['default', 'ContinuousDelivery'],
+#                                ex_key_name='cicd',
+#                                ex_files={'/root/file.txt': 'blah-blah-blah',
+#                                          '/root/authorized_keys': 'ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAQEA6ZVBpfVGEpZe6JAymnZGa5J5pYps/4JSdA4jloPLQKMT+IwLWiB1GYnxwlRM5XNrlc4hvaun7xe3gJHrmnBO3lcl6fRH5q8gchIo3CuAWFCbfxTVDFyGH4TzlyF3KVDICth4yiB13wbe37Pw3eujcN7Q3X4QW5tR2lMmKtS8E+uJiw0vj6gzV5ONlz4mnqaqy9tUjFJIp1zlL7VHl7433NM2qjeuNd8qxdF1RUIlNFXfM3xds58ocY4hTX56ZpEutDW/mRwFx6p3po4Y/yk3kQA2kwVd1PaHOmUjDM9XYRiaysS7OiarGF8eo3HQSbcpBrZFTeVp4gmMfHNQZJNxXQ== andrey@azhuchkov'})
 
     print os_driver.list_sizes()
+#    print os_driver.ex_image_details(182)
 
-    print os_driver.list_sizes()
-#    print os_driver.ex_get_node_details(12)
+#    print os_driver.destroy_node(Struct(id=619))
 
-    #    print os_driver.ex_size_details(1)
+#    print os_driver.ex_get_node_details(665)
+#    os_driver.reboot_node(Struct(id=2843))
+#    print os_driver.ex_image_details(182)
+#    print os_driver.ex_get_node_details(649)
+
+#    print os_driver.ex_size_details(1)
 
 #    print [node.id for node in os_driver.list_nodes()]
 #    node = nodes[0]

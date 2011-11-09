@@ -97,7 +97,10 @@ class RackspaceConnection(RackspaceBaseConnection):
         if self.server_url:
             action = self.server_url + action
         if method in ("POST", "PUT"):
-            headers = {'Content-Type': 'application/xml; charset=UTF-8'}
+            if headers is None:
+                headers = {}
+            if 'Content-Type' not in headers:
+                headers['Content-Type'] = 'application/xml; charset=UTF-8'
         if method == "GET":
             params['cache-busting'] = os.urandom(8).encode('hex')
         return super(RackspaceConnection, self).request(
