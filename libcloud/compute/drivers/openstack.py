@@ -316,6 +316,21 @@ class OpenStackNodeDriver_v1_1(OpenStackNodeDriver):
         if 'ex_files' in kwargs:
             server['personality'] = [{'path': k, 'contents': base64.b64encode(v)} for k, v in kwargs['ex_files'].items()]
 
+        if 'ex_user_data' in kwargs:
+            user_data = kwargs['ex_user_data']
+            if hasattr(user_data, 'read'):
+                user_data = user_data.read()
+            server["user_data"] = base64.b64encode(user_data)
+
+        if 'ex_reservation_id' in kwargs:
+            server['reservation_id'] = kwargs['ex_reservation_id']
+
+        if 'ex_zone_blob' in kwargs:
+            server["zone_blob"] = kwargs['ex_zone_blob']
+
+        if 'ex_availability_zone' in kwargs:
+            server["availability_zone"] = kwargs['ex_availability_zone']
+
         resp = self.connection.request("/servers",
                                        method='POST',
                                        headers={'Content-Type': 'application/json'},
@@ -598,25 +613,24 @@ if __name__ == '__main__':
     enable_debug(sys.stdout)
 
     os_driver = get_driver(Provider.OPENSTACK_V1_1)(NOVA_USERNAME, NOVA_API_KEY, False, host=NOVA_HOST, port=8774,
-                                                    tenant_id='DevTools',
+                                                    tenant_id='',
                                                     auth_provider=KeyStoneAuthProvider(5000))
 
     class Struct(object):
         def __init__(self, id):
             self.id = id
 
-#    print os_driver.create_node(name='az-security-test', image=Struct(307), size=Struct(16),
+#    print os_driver.create_node(name='az-security-test', image=Struct(182), size=Struct(2),
 #                                ex_security_groups=['default', 'ContinuousDelivery'],
-#                                ex_key_name='cicd',
-#                                ex_files={'/root/file.txt': 'blah-blah-blah',
-#                                          '/root/authorized_keys': 'ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAQEA6ZVBpfVGEpZe6JAymnZGa5J5pYps/4JSdA4jloPLQKMT+IwLWiB1GYnxwlRM5XNrlc4hvaun7xe3gJHrmnBO3lcl6fRH5q8gchIo3CuAWFCbfxTVDFyGH4TzlyF3KVDICth4yiB13wbe37Pw3eujcN7Q3X4QW5tR2lMmKtS8E+uJiw0vj6gzV5ONlz4mnqaqy9tUjFJIp1zlL7VHl7433NM2qjeuNd8qxdF1RUIlNFXfM3xds58ocY4hTX56ZpEutDW/mRwFx6p3po4Y/yk3kQA2kwVd1PaHOmUjDM9XYRiaysS7OiarGF8eo3HQSbcpBrZFTeVp4gmMfHNQZJNxXQ== andrey@azhuchkov'})
+#                                ex_availability_zone='nova:lab7.ocp.ord.ebay.com',
+#                                ex_key_name='max_rhel_61_x86_64')
 
-    print os_driver.list_sizes()
+#    print os_driver.list_sizes()
 #    print os_driver.ex_image_details(182)
 
 #    print os_driver.destroy_node(Struct(id=619))
 
-#    print os_driver.ex_get_node_details(665)
+#    print os_driver.ex_get_node_details(3026)
 #    os_driver.reboot_node(Struct(id=2843))
 #    print os_driver.ex_image_details(182)
 #    print os_driver.ex_get_node_details(649)
