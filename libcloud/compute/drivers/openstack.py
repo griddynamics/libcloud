@@ -26,7 +26,7 @@ except:
     import simplejson as json
 
 from libcloud.compute.base import NodeSize, NodeLocation, Node, NodeImage
-from libcloud.compute.drivers.rackspace import RackspaceResponse, RackspaceNodeDriver, RackspaceConnection
+from libcloud.compute.drivers.rackspace import RackspaceResponse, RackspaceNodeDriver, RackspaceConnection, NAMESPACE
 from libcloud.compute.providers import get_driver
 from libcloud.compute.types import Provider, NodeState
 from libcloud.pricing import get_size_price, PRICING_DATA
@@ -71,7 +71,15 @@ class OpenStackResponse(RackspaceResponse):
         if not self.has_content_type('application/xml') or not self.body:
             return self.body
 
-        super(OpenStackResponse, self).parse_error()
+        try:
+            body = ET.XML(self.body)
+        except:
+            raise MalformedResponseError(
+                "Failed to parse XML",
+                body=self.body, driver=OpenStackNodeDriver)
+
+        return "Server Fault [code: %s; message: %s]" % (body.get('code'),
+                                                         body.findtext('{%s}message' % NAMESPACE, '').strip())
 
 
 class OpenStackConnection(RackspaceConnection):
@@ -115,8 +123,7 @@ class KeyStoneAuthProvider(object):
     def authenticate(self, connection):
         credentials = {
             'username': connection.user_id,
-            'password': connection.key,
-            'tenantId': self.tenant_id or connection.tenant_id
+            'password': connection.key
         }
 
         tenant_id = self.tenant_id or (hasattr(connection, 'tenant_id') and getattr(connection, 'tenant_id'))
@@ -178,6 +185,16 @@ class OpenStackNodeDriver(RackspaceNodeDriver):
         self.auth_provider = auth_provider
         super(OpenStackNodeDriver, self).__init__(key, secret, secure, host, port)
 
+    def _to_size(self, el):
+        s = NodeSize(id=self._child_value(el, 'id'),
+                     name=self._child_value(el, 'name'),
+                     ram=int(self._child_value(el, 'ram')),
+                     disk=int(self._child_value(el, 'disk')),
+                     bandwidth=None, # XXX: needs hardcode
+                     price=self._get_size_price(self._child_value(el, 'id')),
+                     driver=self.connection.driver)
+        return s
+
     def _get_size_price(self, size_id):
         if 'openstack' not in PRICING_DATA['compute']:
             return 0.0
@@ -185,6 +202,13 @@ class OpenStackNodeDriver(RackspaceNodeDriver):
         return get_size_price(driver_type='compute',
                               driver_name='openstack',
                               size_id=size_id)
+
+    def _find(self, el, match):
+        return el.find(self._fixxpath(match))
+
+    def _child_value(self, el, match, fix_path=True):
+        element = self._find(el, match) if fix_path else el.find(match)
+        return element.text.strip() if element is not None else None
 
 
 class OpenStackResponse_v1_1(OpenStackResponse):
@@ -314,7 +338,8 @@ class OpenStackNodeDriver_v1_1(OpenStackNodeDriver):
             server['metadata'] = kwargs['ex_metadata']
 
         if 'ex_files' in kwargs:
-            server['personality'] = [{'path': k, 'contents': base64.b64encode(v)} for k, v in kwargs['ex_files'].items()]
+            server['personality'] = [{'path': k, 'contents': base64.b64encode(v)} for k, v in
+                                                                                  kwargs['ex_files'].items()]
 
         if 'ex_user_data' in kwargs:
             user_data = kwargs['ex_user_data']
@@ -443,13 +468,6 @@ class OpenStackNodeDriver_v1_1(OpenStackNodeDriver):
     def _fixxpath(self, xpath):
         # ElementTree wants namespaces in its xpaths, so here we add them.
         return "/".join(["{%s}%s" % (OPENSTACK_NAMESPACE, e) for e in xpath.split("/")])
-
-    def _find(self, el, match):
-        return el.find(self._fixxpath(match))
-
-    def _child_value(self, el, match, fix_path=True):
-        element = self._find(el, match) if fix_path else el.find(match)
-        return element.text.strip() if element is not None else None
 
     def _to_size(self, el):
         return NodeSize(id=el.get('id'),
@@ -613,24 +631,26 @@ if __name__ == '__main__':
     enable_debug(sys.stdout)
 
     os_driver = get_driver(Provider.OPENSTACK_V1_1)(NOVA_USERNAME, NOVA_API_KEY, False, host=NOVA_HOST, port=8774,
-                                                    tenant_id='',
+                                                    tenant_id=NOVA_TENANT_ID,
                                                     auth_provider=KeyStoneAuthProvider(5000))
+
+#    os_driver = get_driver(Provider.OPENSTACK)(NOVA_USERNAME, NOVA_API_KEY, False, host=NOVA_HOST, port=8774,
+#                                               auth_provider=KeyStoneAuthProvider(5000))
 
     class Struct(object):
         def __init__(self, id):
             self.id = id
 
-#    print os_driver.create_node(name='az-security-test', image=Struct(182), size=Struct(2),
+#    print os_driver.create_node(name='remove-me-please', image=Struct(182), size=Struct(2),
 #                                ex_security_groups=['default', 'ContinuousDelivery'],
 #                                ex_availability_zone='nova:lab7.ocp.ord.ebay.com',
 #                                ex_key_name='max_rhel_61_x86_64')
 
-#    print os_driver.list_sizes()
 #    print os_driver.ex_image_details(182)
 
-#    print os_driver.destroy_node(Struct(id=619))
+#    print os_driver.destroy_node(Struct(id=3197))
 
-#    print os_driver.ex_get_node_details(3026)
+#    print os_driver.ex_get_node_details(3197)
 #    os_driver.reboot_node(Struct(id=2843))
 #    print os_driver.ex_image_details(182)
 #    print os_driver.ex_get_node_details(649)
