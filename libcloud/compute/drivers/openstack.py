@@ -25,7 +25,7 @@ try:
 except:
     import simplejson as json
 
-from libcloud.compute.base import NodeSize, NodeLocation, Node, NodeImage
+from libcloud.compute.base import NodeSize, NodeLocation, Node, NodeImage, is_private_subnet
 from libcloud.compute.drivers.rackspace import RackspaceResponse, RackspaceNodeDriver, RackspaceConnection, NAMESPACE
 from libcloud.compute.providers import get_driver
 from libcloud.compute.types import Provider, NodeState
@@ -425,9 +425,8 @@ class OpenStackNodeDriver_v1_1(OpenStackNodeDriver):
         return resp.status == 204
 
     def _to_node(self, el):
-        def get_ips(network_type):
-            network_ips = [self._findall(network, 'ip') for network in self._findall(el, 'addresses/network') if
-                           network.get('id') == network_type]
+        def get_ips():
+            network_ips = [self._findall(network, 'ip') for network in self._findall(el, 'addresses/network')]
 
             ips = reduce(lambda x, y: x.extend(y), network_ips) if network_ips else []
 
@@ -446,8 +445,8 @@ class OpenStackNodeDriver_v1_1(OpenStackNodeDriver):
                  name=el.get('name'),
                  state=self.NODE_STATE_MAP.get(
                      el.get('status'), NodeState.UNKNOWN),
-                 public_ip=get_ips('public'),
-                 private_ip=get_ips('private'),
+                 public_ip=filter(lambda ip: not is_private_subnet(ip), get_ips()),
+                 private_ip=filter(lambda ip: is_private_subnet(ip), get_ips()),
                  driver=self.connection.driver,
                  extra={
                      'password': el.get('adminPass'),
